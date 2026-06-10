@@ -1,0 +1,41 @@
+# ═══ 策略參數（改這裡就好，不用動程式碼）═══
+symbol: fUSD            # 放貸幣別：fUSD=美元, fUST=USDT
+cycle_minutes: 5        # 每幾分鐘跑一次循環
+
+strategy:
+  # 錨點利率 = max(成交IQM, 掛單簿深度利率, min_rate_apy 換算的日利率)
+  book_depth_usd: 300000     # 掛單簿前多少美元深度處的利率當參考
+  trades_lookback: 120       # 取近幾筆成交算 IQM
+  min_rate_apy: 3.0          # 年化低於 3% 寧可不掛（單位：%）
+
+  # 階梯掛單：weight=資金占比, mult=利率倍率（乘在錨點上）
+  ladder:
+    - { weight: 0.50, mult: 1.00 }
+    - { weight: 0.30, mult: 1.15 }
+    - { weight: 0.20, mult: 1.45 }
+
+  # spike 偵測：近 15 分鐘最高成交利率 > IQM × spike_mult 時觸發
+  spike_window_minutes: 15
+  spike_mult: 1.8
+  spike_discount: 0.95       # spike 時最後一檔掛在 近期最高 × 0.95
+
+  # 天期選擇：該檔年化(%) >= apy 就用對應天期（由大到小判斷）
+  periods:
+    - { apy: 18, days: 120 }
+    - { apy: 12, days: 30 }
+    - { apy: 8,  days: 7 }
+    - { apy: 0,  days: 2 }
+
+  # 重掛：掛超過 stale_minutes 未成交、且利率比錨點高 cancel_threshold 以上 → 撤單
+  stale_minutes: 10
+  cancel_threshold: 0.05     # 5%
+
+  min_offer_usd: 150         # Bitfinex 最小掛單額，勿改低
+
+dry_run:
+  simulated_balance: 1000    # DRY_RUN 且沒 API key 時的模擬餘額
+
+telegram:
+  daily_report_hour: 9       # 每日收益總結的推播時間（UTC+8）
+  notify_spike: true
+  notify_fills: true

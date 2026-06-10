@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bitfinex 放貸 Dashboard</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>💸 Bitfinex 放貸 Dashboard</h1>
+  <div class="header-right">
+    <select id="symbolSelect">
+      <option value="fUSD">fUSD（美元）</option>
+      <option value="fUST">fUST（USDT）</option>
+    </select>
+    <span id="lastUpdate" class="muted"></span>
+  </div>
+</header>
+
+<!-- ═══ 市場數據（公開）═══ -->
+<section>
+  <h2>📈 市場放貸數據 <span class="muted small">Bitfinex 公開 WebSocket 即時推送</span></h2>
+  <div class="cards" id="marketCards">
+    <div class="card"><div class="label">FRR 年化</div><div class="value" id="mFrr">—</div></div>
+    <div class="card"><div class="label">最近成交年化</div><div class="value" id="mLast">—</div></div>
+    <div class="card"><div class="label">成交 IQM 年化</div><div class="value" id="mIqm">—</div></div>
+    <div class="card"><div class="label">最佳掛單年化</div><div class="value" id="mAsk">—</div></div>
+    <div class="card"><div class="label">近 1 小時最高</div><div class="value" id="mHigh">—</div></div>
+  </div>
+  <div class="charts">
+    <div class="chart-box"><h3>成交利率走勢（年化 %）</h3><canvas id="tradesChart"></canvas></div>
+    <div class="chart-box"><h3>掛單簿深度（放貸方）</h3><canvas id="bookChart"></canvas></div>
+  </div>
+</section>
+
+<!-- ═══ 個人 Dashboard（token 解鎖）═══ -->
+<section>
+  <h2>🤖 我的放貸總覽</h2>
+
+  <div id="lockPanel" class="lock-panel">
+    <p class="muted">輸入 Dashboard 密碼以檢視個人數據（密碼設定在 Supabase 的 app_settings）</p>
+    <div class="lock-row">
+      <input type="password" id="tokenInput" placeholder="Dashboard 密碼">
+      <button id="unlockBtn">解鎖</button>
+    </div>
+    <p id="lockError" class="error hidden">密碼錯誤或尚未設定 Supabase</p>
+  </div>
+
+  <div id="dashPanel" class="hidden">
+    <div class="status-bar">
+      <span id="botMode" class="badge">—</span>
+      <span id="botHeartbeat" class="muted small">—</span>
+      <button id="lockBtn" class="ghost">登出</button>
+    </div>
+    <div class="cards">
+      <div class="card"><div class="label">放貸中</div><div class="value" id="dLent">—</div></div>
+      <div class="card"><div class="label">加權年化</div><div class="value good" id="dApy">—</div></div>
+      <div class="card"><div class="label">可用餘額</div><div class="value" id="dAvail">—</div></div>
+      <div class="card"><div class="label">放貸筆數</div><div class="value" id="dCredits">—</div></div>
+      <div class="card"><div class="label">掛單中</div><div class="value" id="dOffers">—</div></div>
+      <div class="card"><div class="label">近 30 日收益</div><div class="value good" id="dEarn30">—</div></div>
+    </div>
+    <div class="charts">
+      <div class="chart-box"><h3>每日收益（30 日）</h3><canvas id="earningsChart"></canvas></div>
+      <div class="chart-box"><h3>機器人錨點年化（24 小時）</h3><canvas id="anchorChart"></canvas></div>
+    </div>
+    <div class="chart-box">
+      <h3>目前掛單</h3>
+      <table id="offersTable"><thead><tr><th>金額</th><th>年化</th><th>天期</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="chart-box">
+      <h3>近期動作</h3>
+      <table id="actionsTable"><thead><tr><th>時間</th><th>動作</th><th>內容</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</section>
+
+<footer class="muted small">資料僅供參考，放貸有風險。市場數據：Bitfinex 公開 API｜個人數據：Supabase</footer>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
