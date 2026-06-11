@@ -159,7 +159,8 @@ class Engine:
         if floor_hours > 0:
             try:
                 closes = [c["close"] for c in
-                          self.client.funding_candles(sym, tf="1h", limit=floor_hours)]
+                          self.client.funding_candles(sym, tf="1h", limit=floor_hours,
+                                                      sort=-1)]  # 最新的 N 根
             except BfxError as e:
                 log.warning("%s 抓 1h K 線失敗（保底略過）: %s", sym, e)
         view = analyze_market(ticker, book, trades, self.scfg, now_mts,
