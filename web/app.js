@@ -54,7 +54,7 @@ function buildMarketDOM() {
         <div class="card"><div class="label">FRR 年化</div><div class="value" id="frr-${sym}">—</div></div>
         <div class="card"><div class="label">最近成交</div><div class="value" id="last-${sym}">—</div></div>
         <div class="card"><div class="label">成交 IQM</div><div class="value" id="iqm-${sym}">—</div></div>
-        <div class="card"><div class="label">最佳掛單</div><div class="value" id="ask-${sym}">—</div></div>
+        <div class="card"><div class="label">隊首掛單（市場最低）</div><div class="value" id="ask-${sym}">—</div></div>
         <div class="card"><div class="label">近 1 小時最高</div><div class="value" id="high-${sym}">—</div></div>
       </div>
       <div class="sym-charts">
@@ -292,27 +292,39 @@ function renderMarket() {
   }
 }
 
+// 掛單簿深度依天期分組：各自畫累計曲線，看得出不同天期市場的供給結構
+const BOOK_BUCKETS = [
+  { name: "2天", test: (p) => p <= 2, color: "#4fc3f7" },
+  { name: "3-30天", test: (p) => p > 2 && p <= 30, color: "#ffb74d" },
+  { name: ">30天", test: (p) => p > 30, color: "#ab7df8" },
+];
+
 function drawBookChart(sym, st) {
-  const asks = st.book.filter((e) => e[3] > 0)
-    .map((e) => ({ rate: e[0], amount: e[3] }))
-    .sort((a, b) => a.rate - b.rate);
-  let cum = 0;
-  const pts = asks.map((a) => { cum += a.amount; return { x: dailyToApy(a.rate), y: cum }; });
+  const datasets = BOOK_BUCKETS.map((b) => {
+    const asks = st.book.filter((e) => e[3] > 0 && b.test(e[1]))
+      .map((e) => ({ rate: e[0], amount: e[3] }))
+      .sort((x, y) => x.rate - y.rate);
+    let cum = 0;
+    return {
+      label: b.name,
+      data: asks.map((a) => { cum += a.amount; return { x: dailyToApy(a.rate), y: cum }; }),
+      borderColor: b.color, pointRadius: 0, stepped: true, borderWidth: 1.5,
+    };
+  }).filter((ds) => ds.data.length);
+
   if (st.bookChart) {
-    st.bookChart.data.datasets[0].data = pts;
+    st.bookChart.data.datasets = datasets;
     st.bookChart.update("none");
     return;
   }
   st.bookChart = new Chart($(`book-${sym}`), {
     type: "line",
-    data: { datasets: [{ data: pts, borderColor: SYMBOL_COLORS[sym] || chartColors.good,
-                         fill: true, backgroundColor: "rgba(76,175,128,.15)",
-                         pointRadius: 0, stepped: true }] },
+    data: { datasets },
     options: {
       animation: false,
-      plugins: { legend: { display: false }, tooltip: {
+      plugins: { legend: { display: true }, tooltip: {
         callbacks: { label: (c) =>
-          `年化 ${c.parsed.x.toFixed(2)}% 前累計 $${Math.round(c.parsed.y).toLocaleString()}` },
+          `${c.dataset.label}：年化 ${c.parsed.x.toFixed(2)}% 前累計 $${Math.round(c.parsed.y).toLocaleString()}` },
       }},
       scales: {
         x: { type: "linear", title: { display: true, text: "年化 %" },
@@ -399,6 +411,7 @@ function renderDashboard(d) {
   renderSymbolTable(statuses);
   renderCredits(statuses);
   drawEarningsChart(earnings);
+  drawDailyApyChart(earnings);
   drawAnchorChart(d.snapshots || []);
   renderOffers(statuses);
   renderSuggested(statuses);
@@ -480,6 +493,34 @@ function drawEarningsChart(earnings) {
     options: {
       plugins: { legend: { display: currencies.length > 1 } },
       scales: { x: { stacked: true }, y: { stacked: true } },
+    },
+  });
+}
+
+let dailyApyChart;
+
+function drawDailyApyChart(earnings) {
+  // 每日實際年化 = 當日利息 ÷（當日入帳後錢包餘額 - 當日利息）× 365
+  // 餘額含放貸中的錢，是不錯的資金規模近似；出入金當天分母會跳動 → 該日數據失真
+  const dates = [...new Set(earnings.map((e) => e.date))].sort();
+  const currencies = [...new Set(earnings.map((e) => e.currency))];
+  const datasets = currencies.map((cur) => ({
+    label: cur,
+    data: dates.map((d) => {
+      const e = earnings.find((x) => x.date === d && x.currency === cur);
+      if (!e || !e.balance || e.balance <= e.amount) return null;
+      return +(e.amount / (e.balance - e.amount) * 365 * 100).toFixed(2);
+    }),
+    borderColor: SYMBOL_COLORS[cur] || chartColors.line,
+    pointRadius: 2, borderWidth: 1.5, tension: 0.2, spanGaps: true,
+  }));
+  dailyApyChart?.destroy();
+  dailyApyChart = new Chart($("dailyApyChart"), {
+    type: "line",
+    data: { labels: dates.map((d) => d.slice(5)), datasets },
+    options: {
+      plugins: { legend: { display: currencies.length > 1 } },
+      scales: { y: { ticks: { callback: (v) => v.toFixed(1) + "%" } } },
     },
   });
 }

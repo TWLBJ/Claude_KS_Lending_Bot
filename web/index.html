@@ -56,7 +56,8 @@
       <table id="creditsTable"><thead><tr><th>幣別</th><th>金額</th><th>年化</th><th>天期</th><th>開始時間</th><th>剩餘</th></tr></thead><tbody></tbody></table>
     </div>
     <div class="charts">
-      <div class="chart-box"><h3>每日收益（30 日）</h3><canvas id="earningsChart"></canvas></div>
+      <div class="chart-box"><h3>每日收益（30 日，實際入帳）</h3><canvas id="earningsChart"></canvas></div>
+      <div class="chart-box"><h3>每日實際年化 <span class="muted small">利息÷當日資金規模，出入金當天會失真</span></h3><canvas id="dailyApyChart"></canvas></div>
       <div class="chart-box"><h3>機器人錨點年化（24 小時）</h3><canvas id="anchorChart"></canvas></div>
     </div>
     <div class="chart-box">
