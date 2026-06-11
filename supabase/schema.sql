@@ -66,6 +66,7 @@ create table if not exists bot_status (
   credits_count int,
   offers_count int,
   offers jsonb,
+  credits jsonb,
   anchor_apy double precision,
   frr_apy double precision,
   spike boolean
@@ -135,6 +136,14 @@ begin
       from (
         select ts, action, detail from actions_log
         order by ts desc limit 20
+      ) a
+    ),
+    'closed_credits', (
+      select coalesce(jsonb_agg(to_jsonb(a) order by a.ts desc), '[]'::jsonb)
+      from (
+        select ts, action, detail from actions_log
+        where action in ('closed_matured', 'closed_early')
+        order by ts desc limit 10
       ) a
     )
   );

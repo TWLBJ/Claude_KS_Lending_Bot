@@ -110,12 +110,15 @@ class OfferPlan:
 
 
 def build_ladder(available: float, view: MarketView, scfg: dict) -> list[OfferPlan]:
-    """把可用資金按 ladder 設定拆成多檔。不足最小掛單額的檔位往前一檔合併。"""
+    """把可用資金按 ladder 設定拆成多檔。不足最小掛單額的檔位往前一檔合併。
+    偵測到 spike 時改用 spike_ladder（加重高利率檔位）。"""
     min_offer = float(scfg.get("min_offer_usd", 150))
     if available < min_offer:
         return []
 
     ladder = scfg.get("ladder", [{"weight": 1.0, "mult": 1.0}])
+    if view.spike and scfg.get("spike_ladder"):
+        ladder = scfg["spike_ladder"]
     rungs: list[OfferPlan] = []
     for i, rung in enumerate(ladder):
         amount = available * float(rung["weight"])

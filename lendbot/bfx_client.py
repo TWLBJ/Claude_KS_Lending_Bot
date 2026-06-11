@@ -101,10 +101,16 @@ class BfxClient:
     # ---------- 公開 API ----------
 
     def _get_public(self, path: str, params: dict | None = None):
-        r = self.session.get(f"{PUB_BASE}/{path}", params=params, timeout=TIMEOUT)
-        if r.status_code != 200:
-            raise BfxError(f"public {path} -> {r.status_code}: {r.text[:200]}")
-        return r.json()
+        for attempt in range(3):
+            r = self.session.get(f"{PUB_BASE}/{path}", params=params, timeout=TIMEOUT)
+            if r.status_code == 429:  # 限流：退避後重試
+                log.warning("public %s 限流，%d 秒後重試", path, 20 * (attempt + 1))
+                time.sleep(20 * (attempt + 1))
+                continue
+            if r.status_code != 200:
+                raise BfxError(f"public {path} -> {r.status_code}: {r.text[:200]}")
+            return r.json()
+        raise BfxError(f"public {path} 連續限流，放棄")
 
     def funding_ticker(self, symbol: str) -> FundingTicker:
         d = self._get_public(f"ticker/{symbol}")

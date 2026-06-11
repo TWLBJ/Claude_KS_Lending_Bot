@@ -65,7 +65,7 @@ class SimAccount:
 class SymbolState:
     """每個幣別自己的狀態。"""
     sim: SimAccount | None = None
-    known_credit_ids: set[int] = field(default_factory=set)
+    known_credits: dict[int, Credit] = field(default_factory=dict)
     first_cycle: bool = True
     last_view: MarketView | None = None
     last_spike_notify: float = 0.0
@@ -174,8 +174,8 @@ class Engine:
             offers = self.client.active_offers(sym)
             credits = self.client.active_credits(sym)
 
-        # 4) 成交偵測（第一輪只建基準不推播）
-        self._detect_fills(sym, st, credits)
+        # 4) 成交/結束偵測（第一輪只建基準不推播）
+        self._track_credits(sym, st, credits, now_mts)
 
         # 5) 撤掉過時掛單 + 6) 階梯掛單
         if not self.paused:
@@ -194,24 +194,47 @@ class Engine:
         # 8) 部位快照 + 機器人狀態
         self._save_status(sym, view, available, credits, offers, ts)
 
-    def _detect_fills(self, sym: str, st: SymbolState, credits: list[Credit]):
-        current_ids = {c.id for c in credits}
+    def _track_credits(self, sym: str, st: SymbolState, credits: list[Credit],
+                       now_mts: int):
+        """偵測新成交（出現）與放貸結束（消失）。
+        結束原因判斷：實際持有 >= 天期的 98% 視為到期，否則是借款人提前還款。"""
+        current = {c.id: c for c in credits}
         if st.first_cycle:
-            st.known_credit_ids = current_ids
+            st.known_credits = current
             st.first_cycle = False
             return
-        new_ids = current_ids - st.known_credit_ids
-        st.known_credit_ids = current_ids
-        for c in credits:
-            if c.id in new_ids:
-                self.store.log_action("fill", {
-                    "symbol": sym, "id": c.id, "amount": c.amount, "rate": c.rate,
-                    "period": c.period, "apy": round(daily_to_apy(c.rate) * 100, 2),
-                }, now_iso())
-                if self.cfg.telegram.get("notify_fills", True):
-                    self.tg.notify(f"✅ {sym} 放貸成交！\n金額：{c.amount:,.2f} {sym[1:]}\n"
-                                   f"利率：{c.rate:.6%}/天（年化 {fmt_apy(c.rate)}）\n"
-                                   f"天期：{c.period} 天")
+        new_ids = current.keys() - st.known_credits.keys()
+        closed_ids = st.known_credits.keys() - current.keys()
+        st_known, st.known_credits = st.known_credits, current
+
+        for cid in new_ids:
+            c = current[cid]
+            self.store.log_action("fill", {
+                "symbol": sym, "id": c.id, "amount": c.amount, "rate": c.rate,
+                "period": c.period, "apy": round(daily_to_apy(c.rate) * 100, 2),
+            }, now_iso())
+            if self.cfg.telegram.get("notify_fills", True):
+                self.tg.notify(f"✅ {sym} 放貸成交！\n金額：{c.amount:,.2f} {sym[1:]}\n"
+                               f"利率：{c.rate:.6%}/天（年化 {fmt_apy(c.rate)}）\n"
+                               f"天期：{c.period} 天")
+
+        for cid in closed_ids:
+            c = st_known[cid]
+            held_days = (now_mts - c.mts_opening) / 86_400_000
+            matured = held_days >= c.period * 0.98
+            action = "closed_matured" if matured else "closed_early"
+            reason = "到期歸還" if matured else "借款人提前還款"
+            self.store.log_action(action, {
+                "symbol": sym, "id": c.id, "amount": c.amount, "rate": c.rate,
+                "apy": round(daily_to_apy(c.rate) * 100, 2), "period": c.period,
+                "held_days": round(held_days, 2),
+                "opened": datetime.fromtimestamp(c.mts_opening / 1000,
+                                                 timezone.utc).isoformat(),
+            }, now_iso())
+            if self.cfg.telegram.get("notify_closes", True):
+                self.tg.notify(f"💸 {sym} 放貸結束（{reason}）\n"
+                               f"金額：{c.amount:,.2f} {sym[1:]}｜年化 {fmt_apy(c.rate)}\n"
+                               f"持有 {held_days:.1f} / {c.period} 天")
 
     def _cancel_stale(self, sym: str, st: SymbolState, offers: list[Offer],
                       view: MarketView, now_mts: int, ts: str) -> float:
@@ -270,6 +293,7 @@ class Engine:
             self.store.save_credits_snapshot(
                 sym, total, wrate, len(credits),
                 [{"amount": c.amount, "rate": c.rate, "period": c.period} for c in credits], ts)
+        now_ms = time.time() * 1000
         self.store.update_bot_status(sym, {
             "ts": ts, "mode": self.mode_name, "paused": self.paused,
             "available": round(available, 2), "total_lent": round(total, 2),
@@ -277,6 +301,14 @@ class Engine:
             "credits_count": len(credits), "offers_count": len(offers),
             "offers": [{"amount": o.amount, "rate": o.rate, "period": o.period}
                        for o in offers],
+            "credits": [{
+                "amount": c.amount, "rate": c.rate, "period": c.period,
+                "apy": round(daily_to_apy(c.rate) * 100, 2),
+                "opened": datetime.fromtimestamp(c.mts_opening / 1000,
+                                                 timezone.utc).isoformat(),
+                "remaining_days": round(max(0.0, c.period
+                                            - (now_ms - c.mts_opening) / 86_400_000), 1),
+            } for c in sorted(credits, key=lambda x: -x.amount)],
             "anchor_apy": round(daily_to_apy(view.anchor) * 100, 2),
             "frr_apy": round(view.frr * 365 * 100, 2),
             "spike": view.spike,

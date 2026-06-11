@@ -160,6 +160,20 @@ def test_ladder_spike_chases_recent_high():
     assert abs(plans[-1].rate - 0.001 * 0.95) < 1e-9
 
 
+def test_ladder_spike_uses_spike_ladder():
+    cfg = {**SCFG, "spike_ladder": [
+        {"weight": 0.30, "mult": 1.00},
+        {"weight": 0.30, "mult": 1.20},
+        {"weight": 0.40, "mult": 1.50},
+    ]}
+    view = view_with(0.0003, spike=True, recent_high=0.001)
+    plans = build_ladder(1000, view, cfg)
+    assert [p.amount for p in plans] == [300.0, 300.0, 400.0]  # 加重高利檔
+    # 非 spike 時仍用一般階梯
+    plans2 = build_ladder(1000, view_with(0.0003), cfg)
+    assert [p.amount for p in plans2] == [500.0, 300.0, 200.0]
+
+
 def test_ladder_high_rate_uses_long_period():
     view = view_with(apy_to_daily(0.20))  # 年化 20%
     plans = build_ladder(1000, view, SCFG)

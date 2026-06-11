@@ -365,10 +365,48 @@ function renderDashboard(d) {
   $("dEarn30").textContent = "$" + total30.toFixed(2);
 
   renderSymbolTable(statuses);
+  renderCredits(statuses);
   drawEarningsChart(earnings);
   drawAnchorChart(d.snapshots || []);
   renderOffers(statuses);
+  renderClosed(d.closed_credits || []);
   renderActions(d.recent_actions || []);
+}
+
+function fmtDate(iso) {
+  return new Date(iso).toLocaleString("zh-TW",
+    { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function renderCredits(statuses) {
+  const rows = statuses.flatMap((s) =>
+    (s.credits || []).map((c) => ({ symbol: s.symbol, ...c })));
+  const tbody = $("creditsTable").querySelector("tbody");
+  tbody.innerHTML = rows.length
+    ? rows.map((c) => {
+        const remainPct = c.period ? c.remaining_days / c.period : 0;
+        const bar = `<span class="mini-bar"><span style="width:${(1 - remainPct) * 100}%"></span></span>`;
+        return `<tr><td>${c.symbol}</td><td>$${c.amount.toLocaleString()}</td>
+          <td>${pct(c.apy ?? dailyToApy(c.rate))}</td><td>${c.period} 天</td>
+          <td>${c.opened ? fmtDate(c.opened) : "—"}</td>
+          <td>${c.remaining_days} 天 ${bar}</td></tr>`;
+      }).join("")
+    : `<tr><td colspan="6" class="muted">目前沒有放貸中的部位</td></tr>`;
+}
+
+function renderClosed(closed) {
+  const tbody = $("closedTable").querySelector("tbody");
+  tbody.innerHTML = closed.length
+    ? closed.map((a) => {
+        const d = a.detail || {};
+        const early = a.action === "closed_early";
+        return `<tr><td>${fmtDate(a.ts)}</td><td>${d.symbol || ""}</td>
+          <td>$${(d.amount ?? 0).toLocaleString()}</td>
+          <td>${(d.apy ?? 0).toFixed(2)}%</td>
+          <td>${(d.held_days ?? 0).toFixed(1)} / ${d.period} 天</td>
+          <td><span class="badge ${early ? "warn" : "ok"}">${early ? "提前還款" : "到期歸還"}</span></td></tr>`;
+      }).join("")
+    : `<tr><td colspan="6" class="muted">還沒有結束的單（機器人啟動後才開始追蹤）</td></tr>`;
 }
 
 function renderSymbolTable(statuses) {

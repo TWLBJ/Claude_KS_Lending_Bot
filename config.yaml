@@ -28,6 +28,12 @@ strategy:
   spike_mult: 1.8
   spike_discount: 0.95       # spike 時最後一檔掛在 近期最高 × 0.95
 
+  # spike 時改用這組階梯：加重高利率檔位的資金，提高吃到飆漲的量
+  spike_ladder:
+    - { weight: 0.30, mult: 1.00 }
+    - { weight: 0.30, mult: 1.20 }
+    - { weight: 0.40, mult: 1.50 }
+
   # 天期選擇：該檔年化(%) >= apy 就用對應天期（由大到小判斷）
   periods:
     - { apy: 18, days: 120 }
@@ -48,3 +54,4 @@ telegram:
   daily_report_hour: 9       # 每日收益總結的推播時間（UTC+8）
   notify_spike: true
   notify_fills: true
+  notify_closes: true        # 放貸結束（提前還款/到期）通知

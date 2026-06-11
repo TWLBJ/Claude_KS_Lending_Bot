@@ -68,6 +68,15 @@ button:hover { filter: brightness(1.1); }
 }
 .tf-btns .tf.active { background: var(--accent); color: #07111a; font-weight: 700; }
 .kchart { height: 300px; }
+
+/* 放貸明細的剩餘時間進度條 + 結束原因標籤 */
+.mini-bar {
+  display: inline-block; width: 56px; height: 6px; vertical-align: middle;
+  background: var(--panel2); border-radius: 3px; overflow: hidden; margin-left: 6px;
+}
+.mini-bar span { display: block; height: 100%; background: var(--accent); }
+.badge.ok { color: var(--good); border-color: var(--good); }
+.badge.warn { color: var(--warn, #ffb74d); border-color: #ffb74d; }
 .chart-box {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 12px; padding: 14px; margin-bottom: 12px;

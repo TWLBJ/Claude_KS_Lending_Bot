@@ -20,9 +20,11 @@ lendbot/             機器人本體
 ├── store.py         Supabase 寫入層
 └── telegram_bot.py  Telegram 推播 + 指令
 config.yaml          ★ 策略參數都在這，調整不用改程式
-supabase/schema.sql  資料庫 schema（貼到 Supabase SQL Editor 執行）
+supabase/schema.sql  資料庫 schema（全新安裝用；後續變更放 migrations/）
+supabase/run_sql.py  直連 DB 執行 SQL（python supabase/run_sql.py <檔> <db密碼>）
 web/                 GitHub Pages 靜態網頁
 tests/               單元測試 + 煙霧測試
+research/            策略研究腳本與結論（RESULTS.md 必讀）
 ```
 
 ## 快速開始（本機模擬）
