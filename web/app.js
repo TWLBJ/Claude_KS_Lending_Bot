@@ -369,6 +369,7 @@ function renderDashboard(d) {
   drawEarningsChart(earnings);
   drawAnchorChart(d.snapshots || []);
   renderOffers(statuses);
+  renderSuggested(statuses);
   renderClosed(d.closed_credits || []);
   renderActions(d.recent_actions || []);
 }
@@ -392,6 +393,17 @@ function renderCredits(statuses) {
           <td>${c.remaining_days} 天 ${bar}</td></tr>`;
       }).join("")
     : `<tr><td colspan="6" class="muted">目前沒有放貸中的部位</td></tr>`;
+}
+
+function renderSuggested(statuses) {
+  const rows = statuses.flatMap((s) =>
+    (s.suggested_offers || []).map((o) => ({ symbol: s.symbol, ...o })));
+  $("suggestBox").classList.toggle("hidden", !rows.length);
+  if (!rows.length) return;
+  $("suggestTable").querySelector("tbody").innerHTML = rows.map((o) =>
+    `<tr><td>${o.symbol}</td><td>$${o.amount.toLocaleString()}</td>
+     <td>${(o.apy ?? dailyToApy(o.rate)).toFixed(2)}%</td>
+     <td>${(o.rate * 100).toFixed(5)}%</td><td>${o.period} 天</td></tr>`).join("");
 }
 
 function renderClosed(closed) {

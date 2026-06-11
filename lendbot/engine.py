@@ -69,6 +69,9 @@ class SymbolState:
     first_cycle: bool = True
     last_view: MarketView | None = None
     last_spike_notify: float = 0.0
+    last_plans: list[OfferPlan] = field(default_factory=list)
+    suggestion_fp: str = ""          # 上次推播的建議掛單指紋（避免洗版）
+    last_suggestion_time: float = 0.0
 
 
 class Engine:
@@ -187,9 +190,11 @@ class Engine:
                 available = st.sim.balance
             self._place_ladder(sym, st, available, view, now_mts, ts)
 
-        # 7) 模擬成交（僅模擬模式）
+        # 7) 模擬成交（僅模擬模式）/ 建議掛單推播（僅觀察模式）
         if st.sim is not None:
             st.sim.try_fill(view, now_mts)
+        elif self.dry_run and not self.paused:
+            self._maybe_suggest(sym, st)
 
         # 8) 部位快照 + 機器人狀態
         self._save_status(sym, view, available, credits, offers, ts)
@@ -263,6 +268,7 @@ class Engine:
     def _place_ladder(self, sym: str, st: SymbolState, available: float,
                       view: MarketView, now_mts: int, ts: str):
         plans = build_ladder(available, view, self.scfg)
+        st.last_plans = plans
         for p in plans:
             desc = f"{p.amount:,.2f} @ {fmt_apy(p.rate)} / {p.period}天"
             if self.dry_run and st.sim is None:
@@ -284,6 +290,25 @@ class Engine:
             except BfxError as e:
                 log.warning("%s 掛單失敗 %s: %s", sym, desc, e)
                 self.tg.notify(f"⚠️ {sym} 掛單失敗：{desc}\n{e}")
+
+    def _maybe_suggest(self, sym: str, st: SymbolState):
+        """觀察模式：有可用資金時，把機器人「本來會掛的單」推播給使用者手動操作。
+        同樣的建議不重發；內容有感變化且距上次 >30 分鐘才再推。"""
+        plans = st.last_plans
+        if not plans:
+            st.suggestion_fp = ""
+            return
+        fp = "|".join(f"{round(p.amount / 10)}@{round(p.apy_pct * 2) / 2}/{p.period}"
+                      for p in plans)
+        if fp == st.suggestion_fp or time.time() - st.last_suggestion_time < 1800:
+            return
+        st.suggestion_fp = fp
+        st.last_suggestion_time = time.time()
+        lines = [f"💡 {sym} 建議掛單（觀察模式，請手動到 APP 操作）："]
+        for i, p in enumerate(plans, 1):
+            lines.append(f"{i}. {p.amount:,.2f} {sym[1:]} @ 年化 {p.apy_pct:.2f}% / {p.period} 天")
+        lines.append("（利率請換算回日利率掛 LIMIT 單；或之後切真實模式讓機器人自己掛）")
+        self.tg.notify("\n".join(lines))
 
     def _save_status(self, sym: str, view: MarketView, available: float,
                      credits: list[Credit], offers: list[Offer], ts: str):
@@ -309,6 +334,11 @@ class Engine:
                 "remaining_days": round(max(0.0, c.period
                                             - (now_ms - c.mts_opening) / 86_400_000), 1),
             } for c in sorted(credits, key=lambda x: -x.amount)],
+            "suggested_offers": [{
+                "amount": p.amount, "rate": p.rate,
+                "apy": round(p.apy_pct, 2), "period": p.period,
+            } for p in self.states[sym].last_plans] if (self.dry_run and
+                                                        self.states[sym].sim is None) else [],
             "anchor_apy": round(daily_to_apy(view.anchor) * 100, 2),
             "frr_apy": round(view.frr * 365 * 100, 2),
             "spike": view.spike,
