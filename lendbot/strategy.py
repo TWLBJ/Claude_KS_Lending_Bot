@@ -47,11 +47,12 @@ class MarketView:
     recent_high: float   # spike 視窗內最高成交利率
     spike: bool          # 是否偵測到利率飆漲
     anchor: float        # 最終錨點利率（階梯的基準）
+    rate_floor: float = 0.0  # 24 小時行情保底（避免短暫低迷掛太低）
 
 
 def analyze_market(ticker: FundingTicker, book: list[BookEntry],
                    trades: list[FundingTrade], scfg: dict,
-                   now_mts: int) -> MarketView:
+                   now_mts: int, recent_closes: list[float] | None = None) -> MarketView:
     # 1) 掛單簿：累計 ask 深度到 book_depth_usd，該處利率 = 要排進隊伍前段的利率
     depth_target = float(scfg.get("book_depth_usd", 300_000))
     asks = sorted((b for b in book if b.amount > 0), key=lambda b: b.rate)
@@ -74,13 +75,22 @@ def analyze_market(ticker: FundingTicker, book: list[BookEntry],
     recent_high = max(recent, default=0.0)
     spike = bool(anchor_iqm) and recent_high > anchor_iqm * float(scfg.get("spike_mult", 1.8))
 
-    # 4) 錨點 = max(成交IQM, 深度利率, 最低利率底線)
+    # 4) 行情保底：近 24 小時 1h K 收盤的第 P 百分位。
+    #    成交 IQM 只涵蓋幾分鐘，市場短暫低迷時會把階梯整組拉低，
+    #    低利成交一卡就是 2 天 —— 用較長期的行情撐住下限（掛太高頂多晚點成交）。
+    rate_floor = 0.0
+    if recent_closes:
+        s = sorted(recent_closes)
+        k = int(len(s) * float(scfg.get("floor_percentile", 25)) / 100)
+        rate_floor = s[min(k, len(s) - 1)]
+
+    # 5) 錨點 = max(成交IQM, 深度利率, 行情保底, 最低利率底線)
     min_rate = apy_to_daily(float(scfg.get("min_rate_apy", 3.0)) / 100)
-    anchor = max(anchor_iqm, depth_rate, min_rate)
+    anchor = max(anchor_iqm, depth_rate, rate_floor, min_rate)
 
     return MarketView(frr=ticker.frr, best_ask=best_ask, depth_rate=depth_rate,
                       trade_iqm=anchor_iqm, recent_high=recent_high,
-                      spike=spike, anchor=anchor)
+                      spike=spike, anchor=anchor, rate_floor=rate_floor)
 
 
 # ── 天期選擇 ──────────────────────────────────────────────

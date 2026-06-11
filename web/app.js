@@ -15,6 +15,14 @@ const SYMBOLS = [
 ];
 const TFS = ["15m", "1h", "6h", "1D"];
 const DEFAULT_TF = "1h";
+// K 棒天期篩選：聚合 2-30 天 / 單一天期（FRR 長單多印在 120 天）
+const PERIODS = [
+  { key: "a30:p2:p30", label: "2-30天" },
+  { key: "p2", label: "2天" },
+  { key: "p30", label: "30天" },
+  { key: "p120", label: "120天" },
+];
+const DEFAULT_PKEY = "a30:p2:p30";
 
 const dailyToApy = (r) => (Math.pow(1 + r, 365) - 1) * 100;
 const pct = (apy) => apy.toFixed(2) + "%";
@@ -53,9 +61,15 @@ function buildMarketDOM() {
         <div class="chart-box">
           <div class="chart-head">
             <h3>成交利率 K 線（年化 %）</h3>
-            <div class="tf-btns" id="tfs-${sym}">
-              ${TFS.map((tf) => `<button class="tf ${tf === DEFAULT_TF ? "active" : ""}"
-                 data-sym="${sym}" data-tf="${tf}">${tf}</button>`).join("")}
+            <div class="btn-rows">
+              <div class="tf-btns" id="tfs-${sym}">
+                ${TFS.map((tf) => `<button class="tf ${tf === DEFAULT_TF ? "active" : ""}"
+                   data-sym="${sym}" data-tf="${tf}">${tf}</button>`).join("")}
+              </div>
+              <div class="tf-btns" id="pds-${sym}">
+                ${PERIODS.map((p) => `<button class="tf pd ${p.key === DEFAULT_PKEY ? "active" : ""}"
+                   data-sym="${sym}" data-pkey="${p.key}">${p.label}</button>`).join("")}
+              </div>
             </div>
           </div>
           <div class="kchart" id="kchart-${sym}"></div>
@@ -67,8 +81,10 @@ function buildMarketDOM() {
       </div>
     </div>`).join("");
 
-  document.querySelectorAll(".tf").forEach((btn) =>
+  document.querySelectorAll(".tf:not(.pd)").forEach((btn) =>
     btn.addEventListener("click", () => switchTf(btn.dataset.sym, btn.dataset.tf)));
+  document.querySelectorAll(".tf.pd").forEach((btn) =>
+    btn.addEventListener("click", () => switchPeriod(btn.dataset.sym, btn.dataset.pkey)));
 }
 
 // ═══════════ 市場區 WebSocket ═══════════
@@ -79,8 +95,8 @@ const market = {
   states: {},   // sym -> { tf, ticker, trades[], book[], candleChanId, kchart, kseries, bookChart, dirty }
 };
 
-function candleKey(sym, tf) {
-  return `trade:${tf}:${sym}:a30:p2:p30`;  // 聚合 2-30 天期
+function candleKey(sym, tf, pkey) {
+  return `trade:${tf}:${sym}:${pkey}`;
 }
 
 function initKChart(sym) {
@@ -116,7 +132,8 @@ function startMarket() {
   for (const { sym } of SYMBOLS) {
     const prev = market.states[sym];
     market.states[sym] = {
-      tf: prev?.tf || DEFAULT_TF, ticker: null, trades: [], book: [],
+      tf: prev?.tf || DEFAULT_TF, pkey: prev?.pkey || DEFAULT_PKEY,
+      ticker: null, trades: [], book: [],
       candleChanId: null,
       kchart: prev?.kchart, kseries: prev?.kseries, bookChart: prev?.bookChart,
       dirty: false,
@@ -138,7 +155,8 @@ function startMarket() {
       ws.send(JSON.stringify({ event: "subscribe", channel: "book", symbol: sym,
                                prec: "P0", len: "100" }));
       ws.send(JSON.stringify({ event: "subscribe", channel: "candles",
-                               key: candleKey(sym, market.states[sym].tf) }));
+                               key: candleKey(sym, market.states[sym].tf,
+                                              market.states[sym].pkey) }));
     }
   };
 
@@ -215,20 +233,34 @@ function applyBookUpdate(st, [rate, period, count, amount]) {
   }
 }
 
+function resubscribeCandles(sym) {
+  const st = market.states[sym];
+  if (market.ws?.readyState !== WebSocket.OPEN) return;
+  if (st.candleChanId != null) {
+    market.ws.send(JSON.stringify({ event: "unsubscribe", chanId: st.candleChanId }));
+    st.candleChanId = null;
+  }
+  market.ws.send(JSON.stringify({ event: "subscribe", channel: "candles",
+                                  key: candleKey(sym, st.tf, st.pkey) }));
+}
+
 function switchTf(sym, tf) {
   const st = market.states[sym];
   if (!st || st.tf === tf) return;
   st.tf = tf;
   document.querySelectorAll(`#tfs-${sym} .tf`).forEach((b) =>
     b.classList.toggle("active", b.dataset.tf === tf));
-  if (market.ws?.readyState === WebSocket.OPEN) {
-    if (st.candleChanId != null) {
-      market.ws.send(JSON.stringify({ event: "unsubscribe", chanId: st.candleChanId }));
-      st.candleChanId = null;
-    }
-    market.ws.send(JSON.stringify({ event: "subscribe", channel: "candles",
-                                    key: candleKey(sym, tf) }));
-  }
+  resubscribeCandles(sym);
+}
+
+function switchPeriod(sym, pkey) {
+  const st = market.states[sym];
+  if (!st || st.pkey === pkey) return;
+  st.pkey = pkey;
+  document.querySelectorAll(`#pds-${sym} .tf`).forEach((b) =>
+    b.classList.toggle("active", b.dataset.pkey === pkey));
+  st.kseries.setData([]);  // 清掉舊天期的 K 棒，等新快照
+  resubscribeCandles(sym);
 }
 
 // ═══════════ 市場區渲染（每 2 秒，K 線除外）═══════════

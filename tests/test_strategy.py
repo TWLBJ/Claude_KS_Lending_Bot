@@ -98,6 +98,21 @@ def test_min_rate_floor():
     assert view.anchor >= apy_to_daily(0.03) - 1e-12
 
 
+def test_floor_lifts_anchor_in_dip():
+    # 短期成交跌到 0.0001，但近 24h 行情保底（P25=0.00028）撐住錨點
+    dip_trades = make_trades(rate=0.0001)
+    closes = [0.0003] * 17 + [0.00028] * 7  # 排序後第 6 個（P25）= 0.00028
+    view = analyze_market(make_ticker(), make_book(), dip_trades, SCFG, NOW,
+                          recent_closes=closes)
+    assert view.rate_floor == 0.00028
+    assert view.anchor >= 0.00028
+
+
+def test_no_floor_without_closes():
+    view = analyze_market(make_ticker(), make_book(), make_trades(0.00025), SCFG, NOW)
+    assert view.rate_floor == 0.0
+
+
 def test_spike_detection():
     trades = make_trades(0.0002, n=30) + [
         FundingTrade(mts=NOW - 5 * 60_000, amount=5000, rate=0.0006, period=30)

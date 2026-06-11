@@ -61,7 +61,8 @@ button:hover { filter: brightness(1.1); }
 .sym-charts { display: grid; gap: 12px; grid-template-columns: 3fr 2fr; }
 @media (max-width: 900px) { .sym-charts { grid-template-columns: 1fr; } }
 .chart-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.tf-btns { display: flex; gap: 4px; }
+.btn-rows { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.tf-btns { display: flex; gap: 4px; flex-wrap: wrap; }
 .tf-btns .tf {
   background: var(--panel2); color: var(--muted); border: 1px solid var(--border);
   padding: 3px 10px; font-size: 0.78rem; border-radius: 6px; font-weight: 500;

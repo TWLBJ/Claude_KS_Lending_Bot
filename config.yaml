@@ -17,6 +17,11 @@ strategy:
   trades_lookback: 120       # 取近幾筆成交算 IQM
   min_rate_apy: 3.0          # 年化低於 3% 寧可不掛（單位：%）
 
+  # 錨點保底：近 N 小時 1h K 收盤的第 P 百分位。
+  # 防止市場短暫低迷時整組階梯掛太低、低利成交被卡 2 天
+  floor_hours: 24
+  floor_percentile: 25
+
   # 階梯掛單：weight=資金占比, mult=利率倍率（乘在錨點上）
   ladder:
     - { weight: 0.50, mult: 1.00 }

@@ -150,16 +150,25 @@ class Engine:
         ts = now_iso()
         currency = sym[1:]
 
-        # 1) 市場數據與分析
+        # 1) 市場數據與分析（含 24 小時 1h K 線做錨點保底）
         ticker = self.client.funding_ticker(sym)
         book = self.client.funding_book(sym, length=100)
         trades = self.client.funding_trades(sym, limit=int(self.scfg.get("trades_lookback", 120)))
-        view = analyze_market(ticker, book, trades, self.scfg, now_mts)
+        closes: list[float] = []
+        floor_hours = int(self.scfg.get("floor_hours", 24))
+        if floor_hours > 0:
+            try:
+                closes = [c["close"] for c in
+                          self.client.funding_candles(sym, tf="1h", limit=floor_hours)]
+            except BfxError as e:
+                log.warning("%s 抓 1h K 線失敗（保底略過）: %s", sym, e)
+        view = analyze_market(ticker, book, trades, self.scfg, now_mts,
+                              recent_closes=closes)
         st.last_view = view
-        log.info("%s：FRR=%s IQM=%s 深度=%s 錨點=%s%s",
+        log.info("%s：FRR=%s IQM=%s 深度=%s 保底=%s 錨點=%s%s",
                  sym, fmt_apy(view.frr), fmt_apy(view.trade_iqm),
-                 fmt_apy(view.depth_rate), fmt_apy(view.anchor),
-                 " 🔥SPIKE" if view.spike else "")
+                 fmt_apy(view.depth_rate), fmt_apy(view.rate_floor),
+                 fmt_apy(view.anchor), " 🔥SPIKE" if view.spike else "")
         self.store.save_market_snapshot(sym, view, ts)
 
         # 2) spike 警報（每幣別 30 分鐘冷卻）
