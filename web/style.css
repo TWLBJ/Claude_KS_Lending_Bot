@@ -69,6 +69,7 @@ button:hover { filter: brightness(1.1); }
 }
 .tf-btns .tf.active { background: var(--accent); color: #07111a; font-weight: 700; }
 .kchart { height: 300px; }
+.ohlc { margin: 4px 0 6px; min-height: 1.2em; font-variant-numeric: tabular-nums; }
 
 /* 放貸明細的剩餘時間進度條 + 結束原因標籤 */
 .mini-bar {

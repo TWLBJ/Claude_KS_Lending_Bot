@@ -72,19 +72,35 @@ function buildMarketDOM() {
               </div>
             </div>
           </div>
+          <div class="ohlc muted small" id="ohlc-${sym}">（滑鼠移到 K 棒上顯示開高低收）</div>
           <div class="kchart" id="kchart-${sym}"></div>
         </div>
         <div class="chart-box">
-          <h3>掛單簿深度（放貸方）</h3>
+          <div class="chart-head">
+            <h3>掛單簿深度</h3>
+            <div class="tf-btns" id="bks-${sym}">
+              ${["全部", "2天", "3-30天", ">30天", "借款方"].map((bk) =>
+                `<button class="tf bk ${bk === "全部" ? "active" : ""}"
+                  data-sym="${sym}" data-bk="${bk}">${bk}</button>`).join("")}
+            </div>
+          </div>
           <canvas id="book-${sym}"></canvas>
         </div>
       </div>
     </div>`).join("");
 
-  document.querySelectorAll(".tf:not(.pd)").forEach((btn) =>
+  document.querySelectorAll(".tf:not(.pd):not(.bk)").forEach((btn) =>
     btn.addEventListener("click", () => switchTf(btn.dataset.sym, btn.dataset.tf)));
   document.querySelectorAll(".tf.pd").forEach((btn) =>
     btn.addEventListener("click", () => switchPeriod(btn.dataset.sym, btn.dataset.pkey)));
+  document.querySelectorAll(".tf.bk").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const { sym, bk } = btn.dataset;
+      market.states[sym].bookFilter = bk;
+      document.querySelectorAll(`#bks-${sym} .tf`).forEach((b) =>
+        b.classList.toggle("active", b.dataset.bk === bk));
+      market.states[sym].dirty = true;
+    }));
 }
 
 // ═══════════ 市場區 WebSocket ═══════════
@@ -109,6 +125,8 @@ function initKChart(sym) {
     // 對數刻度：放貸利率偶爾飆漲數十倍（如年化 1000%+），線性刻度會把平時區間壓扁
     rightPriceScale: { borderColor: chartColors.grid,
                        mode: LightweightCharts.PriceScaleMode.Logarithmic },
+    // Normal 模式：十字線跟著滑鼠座標自由移動（預設會吸附到收盤價）
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
     localization: { priceFormatter: (v) => v.toFixed(2) + "%" },
   });
   const series = chart.addCandlestickSeries({
@@ -116,6 +134,20 @@ function initKChart(sym) {
     wickUpColor: chartColors.good, wickDownColor: chartColors.bad,
     borderVisible: false,
     priceFormat: { type: "custom", formatter: (v) => v.toFixed(2) + "%", minMove: 0.01 },
+  });
+  // 滑過 K 棒時顯示該棒的開高低收
+  chart.subscribeCrosshairMove((param) => {
+    const el = $(`ohlc-${sym}`);
+    const d = param?.seriesData?.get(series);
+    if (!d || d.open === undefined) {
+      el.textContent = "（滑鼠移到 K 棒上顯示開高低收）";
+      return;
+    }
+    const t = new Date(param.time * 1000).toLocaleString("zh-TW",
+      { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+    const color = d.close >= d.open ? chartColors.good : chartColors.bad;
+    el.innerHTML = `${t}｜開 ${d.open.toFixed(2)}%｜高 ${d.high.toFixed(2)}%｜` +
+      `低 ${d.low.toFixed(2)}%｜收 <b style="color:${color}">${d.close.toFixed(2)}%</b>`;
   });
   return { chart, series };
 }
@@ -133,6 +165,7 @@ function startMarket() {
     const prev = market.states[sym];
     market.states[sym] = {
       tf: prev?.tf || DEFAULT_TF, pkey: prev?.pkey || DEFAULT_PKEY,
+      bookFilter: prev?.bookFilter || "全部",
       ticker: null, trades: [], book: [],
       candleChanId: null,
       kchart: prev?.kchart, kseries: prev?.kseries, bookChart: prev?.bookChart,
@@ -300,7 +333,7 @@ const BOOK_BUCKETS = [
 ];
 
 function drawBookChart(sym, st) {
-  const datasets = BOOK_BUCKETS.map((b) => {
+  const all = BOOK_BUCKETS.map((b) => {
     const asks = st.book.filter((e) => e[3] > 0 && b.test(e[1]))
       .map((e) => ({ rate: e[0], amount: e[3] }))
       .sort((x, y) => x.rate - y.rate);
@@ -310,7 +343,22 @@ function drawBookChart(sym, st) {
       data: asks.map((a) => { cum += a.amount; return { x: dailyToApy(a.rate), y: cum }; }),
       borderColor: b.color, pointRadius: 0, stepped: true, borderWidth: 1.5,
     };
-  }).filter((ds) => ds.data.length);
+  });
+
+  // 借款方（bids）：想借錢的人掛的需求單，從最高出價往低利率累計
+  const bids = st.book.filter((e) => e[3] < 0)
+    .map((e) => ({ rate: e[0], amount: -e[3] }))
+    .sort((x, y) => y.rate - x.rate);
+  let cumB = 0;
+  all.push({
+    label: "借款方",
+    data: bids.map((b) => { cumB += b.amount; return { x: dailyToApy(b.rate), y: cumB }; }),
+    borderColor: chartColors.bad, pointRadius: 0, stepped: true,
+    borderWidth: 1.5, borderDash: [5, 3],
+  });
+
+  const f = st.bookFilter || "全部";
+  const datasets = all.filter((ds) => ds.data.length && (f === "全部" || ds.label === f));
 
   if (st.bookChart) {
     st.bookChart.data.datasets = datasets;
