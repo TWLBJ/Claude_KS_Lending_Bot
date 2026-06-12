@@ -15,8 +15,8 @@ from .bfx_client import BfxClient, BfxError, Credit, Offer
 from .config import Config
 from .logger import get_logger
 from .store import Store
-from .strategy import (MarketView, OfferPlan, analyze_market, build_ladder,
-                       daily_to_apy, should_cancel)
+from .strategy import (MarketView, OfferPlan, analyze_market, apy_to_daily,
+                       build_ladder, daily_to_apy, should_cancel)
 from .telegram_bot import TelegramBot
 
 log = get_logger("engine")
@@ -73,6 +73,8 @@ class SymbolState:
     suggestion_fp: str = ""          # 上次推播的建議掛單指紋（避免洗版）
     last_suggestion_time: float = 0.0
     announced_cancels: set[int] = field(default_factory=set)  # 觀察模式已記錄過的撤單建議
+    processed_closed: set[int] = field(default_factory=set)   # 已處理過的結束單 id
+    first_hist_sync: bool = True
 
 
 class Engine:
@@ -188,8 +190,10 @@ class Engine:
             offers = self.client.active_offers(sym)
             credits = self.client.active_credits(sym)
 
-        # 4) 成交/結束偵測（第一輪只建基準不推播）
+        # 4) 成交/結束偵測（第一輪只建基準不推播）+ 歷史回補（抓盲區內成交又秒還的單）
         self._track_credits(sym, st, credits, now_mts)
+        if self.has_auth:
+            self._reconcile_closed_history(sym, st)
 
         # 5) 撤掉過時掛單 + 6) 階梯掛單
         if not self.paused:
@@ -236,21 +240,51 @@ class Engine:
 
         for cid in closed_ids:
             c = st_known[cid]
-            held_days = (now_mts - c.mts_opening) / 86_400_000
-            matured = held_days >= c.period * 0.98
-            action = "closed_matured" if matured else "closed_early"
-            reason = "到期歸還" if matured else "借款人提前還款"
-            self.store.log_action(action, {
-                "symbol": sym, "id": c.id, "amount": c.amount, "rate": c.rate,
-                "apy": round(daily_to_apy(c.rate) * 100, 2), "period": c.period,
-                "held_days": round(held_days, 2),
-                "opened": datetime.fromtimestamp(c.mts_opening / 1000,
-                                                 timezone.utc).isoformat(),
-            }, now_iso())
-            if self.cfg.telegram.get("notify_closes", True):
-                self.tg.notify(f"💸 {sym} 放貸結束（{reason}）\n"
-                               f"金額：{c.amount:,.2f} {sym[1:]}｜年化 {fmt_apy(c.rate)}\n"
-                               f"持有 {held_days:.1f} / {c.period} 天")
+            st.processed_closed.add(cid)
+            self._record_close(sym, c.amount, c.rate, c.period, c.mts_opening,
+                               now_mts, cid)
+
+    def _record_close(self, sym: str, amount: float, rate: float, period: int,
+                      mts_opening: int, mts_close: int, cid: int,
+                      backfill: bool = False):
+        held_days = max(0.0, (mts_close - mts_opening) / 86_400_000)
+        matured = held_days >= period * 0.98
+        action = "closed_matured" if matured else "closed_early"
+        reason = "到期歸還" if matured else "借款人提前還款"
+        if backfill:
+            reason += "・快速成交後歸還"
+        self.store.log_action(action, {
+            "symbol": sym, "id": cid, "amount": amount, "rate": rate,
+            "apy": round(daily_to_apy(rate) * 100, 2), "period": period,
+            "held_days": round(held_days, 2),
+            "opened": datetime.fromtimestamp(mts_opening / 1000,
+                                             timezone.utc).isoformat(),
+        }, now_iso())
+        if self.cfg.telegram.get("notify_closes", True):
+            held_str = (f"{held_days * 24:.1f} 小時" if held_days < 1
+                        else f"{held_days:.1f} 天")
+            self.tg.notify(f"💸 {sym} 放貸結束（{reason}）\n"
+                           f"金額：{amount:,.2f} {sym[1:]}｜年化 {fmt_apy(rate)}\n"
+                           f"持有 {held_str} / {period} 天")
+
+    def _reconcile_closed_history(self, sym: str, st: SymbolState):
+        """用已結束放貸的歷史回補輪詢盲區（成交後快速歸還、兩次輪詢間來去的單）。"""
+        try:
+            hist = self.client.credits_history(sym, limit=25)
+        except BfxError as e:
+            log.warning("%s 結束歷史查詢失敗: %s", sym, e)
+            return
+        if st.first_hist_sync:  # 啟動時把既有歷史標記為已處理，避免洗版
+            st.processed_closed.update(h.id for h in hist)
+            st.first_hist_sync = False
+            return
+        for h in hist:
+            if h.id in st.processed_closed:
+                continue
+            st.processed_closed.add(h.id)
+            log.info("%s 盲區回補：#%s %.2f @ %s", sym, h.id, h.amount, fmt_apy(h.rate))
+            self._record_close(sym, h.amount, h.rate, h.period,
+                               h.mts_opening, h.mts_close, h.id, backfill=True)
 
     def _cancel_stale(self, sym: str, st: SymbolState, offers: list[Offer],
                       view: MarketView, now_mts: int, ts: str) -> float:
@@ -482,14 +516,62 @@ class Engine:
 
     def _register_commands(self):
         self.tg.commands.update({
-            "/status": self._status_text,
-            "/rates": self._rates_text,
-            "/earnings": self._earnings_summary,
-            "/pause": self._cmd_pause,
-            "/resume": self._cmd_resume,
-            "/help": lambda: ("/status 狀態總覽\n/rates 市場利率\n/earnings 收益\n"
-                              "/pause 暫停掛單\n/resume 恢復掛單"),
+            "/status": lambda _="": self._status_text(),
+            "/rates": lambda _="": self._rates_text(),
+            "/earnings": lambda _="": self._earnings_summary(),
+            "/pause": lambda _="": self._cmd_pause(),
+            "/resume": lambda _="": self._cmd_resume(),
+            "/go": lambda _="": self._cmd_go(),
+            "/lend": self._cmd_lend,
+            "/help": lambda _="": (
+                "/status 狀態總覽\n/rates 市場利率\n/earnings 收益\n"
+                "/go 立刻執行最新建議掛單（觀察模式也會真的下單）\n"
+                "/lend 手動掛單，格式：/lend fUSD 250 11.5 7\n"
+                "　　　（幣別 金額 年化% 天期）\n"
+                "/pause 暫停掛單\n/resume 恢復掛單"),
         })
+
+    def _cmd_go(self) -> str:
+        """把最新一輪的建議掛單真的送出（使用者明確確認，觀察模式也執行）。"""
+        if not self.has_auth:
+            return "❌ 沒有 API key，無法下單"
+        results = []
+        for sym, st in self.states.items():
+            plans, st.last_plans = st.last_plans, []  # 取走避免重複執行
+            for p in plans:
+                try:
+                    self.client.submit_offer(sym, p.amount, p.rate, p.period)
+                    self.store.log_action("submit(manual)", {
+                        "symbol": sym, "amount": p.amount, "rate": p.rate,
+                        "period": p.period}, now_iso())
+                    results.append(f"✅ {sym} {p.amount:,.2f} @ {p.apy_pct:.2f}% / {p.period}天")
+                except BfxError as e:
+                    results.append(f"❌ {sym} {p.amount:,.2f}：{e}")
+        if not results:
+            return "目前沒有待執行的建議（可用資金不足 $150，或建議已被執行過）"
+        return "📌 已執行建議掛單：\n" + "\n".join(results)
+
+    def _cmd_lend(self, args: str = "") -> str:
+        """手動掛單：/lend fUSD 250 11.5 7（幣別 金額 年化% 天期）"""
+        if not self.has_auth:
+            return "❌ 沒有 API key，無法下單"
+        try:
+            s, amt, apy, per = args.split()
+            sym = s if s.startswith("f") else "f" + s.upper()
+            amount = float(amt)
+            rate = apy_to_daily(float(apy) / 100)
+            period = int(per)
+        except ValueError:
+            return "格式：/lend fUSD 250 11.5 7（幣別 金額 年化% 天期）"
+        if sym not in self.cfg.symbols:
+            return f"幣別要是 {self.cfg.symbols} 其中之一"
+        try:
+            self.client.submit_offer(sym, amount, rate, period)
+            self.store.log_action("submit(manual)", {
+                "symbol": sym, "amount": amount, "rate": rate, "period": period}, now_iso())
+            return f"✅ 已掛單：{sym} {amount:,.2f} @ 年化 {float(apy):.2f}% / {period}天"
+        except BfxError as e:
+            return f"❌ 掛單失敗：{e}"
 
     def _status_text(self) -> str:
         lines = [f"🤖 {self.mode_name}{'（已暫停）' if self.paused else ''}"]

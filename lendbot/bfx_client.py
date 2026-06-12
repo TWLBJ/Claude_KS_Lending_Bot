@@ -80,6 +80,18 @@ class Credit:
 
 
 @dataclass
+class ClosedCredit:
+    """已結束的放貸（歷史）。"""
+    id: int
+    symbol: str
+    amount: float
+    rate: float
+    period: int
+    mts_opening: int
+    mts_close: int
+
+
+@dataclass
 class LedgerEntry:
     """帳本紀錄（category 28 = 放貸利息收入）。"""
     id: int
@@ -178,6 +190,14 @@ class BfxClient:
         d = self._post_auth(f"auth/r/funding/credits/{symbol}")
         return [Credit(id=int(c[0]), symbol=c[1], amount=float(c[5]),
                        rate=float(c[11]), period=int(c[12]), mts_opening=int(c[13]))
+                for c in d]
+
+    def credits_history(self, symbol: str, limit: int = 25) -> list[ClosedCredit]:
+        """已結束的放貸歷史（解掉輪詢盲區：成交後快速歸還的單也查得到）。"""
+        d = self._post_auth(f"auth/r/funding/credits/{symbol}/hist", {"limit": limit})
+        return [ClosedCredit(id=int(c[0]), symbol=c[1], amount=float(c[5]),
+                             rate=float(c[11]), period=int(c[12]),
+                             mts_opening=int(c[13] or c[3]), mts_close=int(c[4] or 0))
                 for c in d]
 
     def submit_offer(self, symbol: str, amount: float, rate: float, period: int) -> dict:

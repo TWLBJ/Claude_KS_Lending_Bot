@@ -78,11 +78,13 @@ class TelegramBot:
         chat_id = str((msg.get("chat") or {}).get("id", ""))
         if chat_id != str(self.chat_id) or not text.startswith("/"):
             return  # 只理會自己的 chat
-        cmd = text.split()[0].split("@")[0].lower()
+        parts = text.split(maxsplit=1)
+        cmd = parts[0].split("@")[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
         handler = self.commands.get(cmd)
         if handler:
             try:
-                self.notify(handler())
+                self.notify(handler(args))
             except Exception as e:
                 self.notify(f"指令執行錯誤：{e}")
         else:
