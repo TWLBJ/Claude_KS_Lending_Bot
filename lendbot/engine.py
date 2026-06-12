@@ -72,6 +72,7 @@ class SymbolState:
     last_plans: list[OfferPlan] = field(default_factory=list)
     suggestion_fp: str = ""          # 上次推播的建議掛單指紋（避免洗版）
     last_suggestion_time: float = 0.0
+    announced_cancels: set[int] = field(default_factory=set)  # 觀察模式已記錄過的撤單建議
 
 
 class Engine:
@@ -263,8 +264,10 @@ class Engine:
                 if st.sim is not None:
                     st.sim.cancel(o.id)
                     freed += o.amount
-                self.store.log_action("cancel(dry)", {"symbol": sym, "id": o.id,
-                                                      "rate": o.rate, "amount": o.amount}, ts)
+                if o.id not in st.announced_cancels:  # 觀察模式同一筆只記錄一次
+                    st.announced_cancels.add(o.id)
+                    self.store.log_action("cancel(dry)", {"symbol": sym, "id": o.id,
+                                                          "rate": o.rate, "amount": o.amount}, ts)
                 continue
             try:
                 self.client.cancel_offer(o.id)
@@ -310,7 +313,7 @@ class Engine:
             return
         fp = "|".join(f"{round(p.amount / 10)}@{round(p.apy_pct * 2) / 2}/{p.period}"
                       for p in plans)
-        if fp == st.suggestion_fp or time.time() - st.last_suggestion_time < 1800:
+        if fp == st.suggestion_fp or time.time() - st.last_suggestion_time < 600:
             return
         st.suggestion_fp = fp
         st.last_suggestion_time = time.time()

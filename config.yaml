@@ -1,6 +1,6 @@
 # ═══ 策略參數（改這裡就好，不用動程式碼）═══
 symbols: [fUSD, fUST]   # 放貸幣別（可多個）：fUSD=美元, fUST=USDT
-cycle_minutes: 5        # 每幾分鐘跑一次循環
+cycle_minutes: 2        # 每幾分鐘跑一次循環（太長會看不到「成交後馬上被還款」的單）
 
 # 利差提醒（依 research/RESULTS.md 回測結論：長期觀察、極少出手）
 # 30 日 MA 利差連續 confirm_days 天都 > min_diff_apy 才推播；頻繁切換會被成本吃掉
