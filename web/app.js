@@ -15,6 +15,7 @@ const SYMBOLS = [
 ];
 const TFS = ["15m", "1h", "6h", "1D"];
 const DEFAULT_TF = "1h";
+const VISIBLE_BARS = 48; // 預設顯示根數（1h K ≈ 2 天）
 // K 棒天期篩選：聚合 2-30 天 / 單一天期（FRR 長單多印在 120 天）
 const PERIODS = [
   { key: "a30:p2:p30", label: "2-30天" },
@@ -279,7 +280,13 @@ function handleChannel(sym, channel, payload, extra) {
       for (const c of payload) seen.set(c[0], c);
       const data = [...seen.values()].sort((a, b) => a[0] - b[0]).map(mapCandle);
       st.kseries.setData(data);
-      st.kchart.timeScale().fitContent();
+      // 預設只顯示最近約 48 根（1h K 約 2 天），太寬會密密麻麻；使用者仍可自由縮放/平移
+      const bars = data.length;
+      if (bars > VISIBLE_BARS) {
+        st.kchart.timeScale().setVisibleLogicalRange({ from: bars - VISIBLE_BARS, to: bars + 1 });
+      } else {
+        st.kchart.timeScale().fitContent();
+      }
     } else if (Array.isArray(payload) && typeof payload[0] === "number") {
       st.kseries.update(mapCandle(payload));
     }
