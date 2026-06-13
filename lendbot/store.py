@@ -40,6 +40,21 @@ class Store:
             log.warning("supabase %s %s 連線失敗: %s", method, table, e)
             return False
 
+    def select(self, table: str, params: dict) -> list:
+        """讀取（用 service key，繞過 RLS）。失敗回空 list 不中斷。"""
+        if not self.enabled:
+            return []
+        try:
+            r = requests.get(f"{self.base}/{table}", headers=self.headers,
+                             params=params, timeout=TIMEOUT)
+            if r.status_code >= 300:
+                log.warning("supabase GET %s -> %s: %s", table, r.status_code, r.text[:200])
+                return []
+            return r.json()
+        except requests.RequestException as e:
+            log.warning("supabase GET %s 連線失敗: %s", table, e)
+            return []
+
     def insert(self, table: str, row: dict) -> bool:
         return self._request("POST", table, json=row)
 

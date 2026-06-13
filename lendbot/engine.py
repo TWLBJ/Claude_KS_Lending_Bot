@@ -506,6 +506,95 @@ class Engine:
             lines.append(f"{currency}｜今日 {sums[1]:.4f}｜7日 {sums[7]:.4f}｜30日 {sums[30]:.4f}")
         return "\n".join(lines)
 
+    def _yesterday_earnings(self, y_start: datetime, y_end: datetime) -> dict:
+        """昨日（本地 TZ 區間）各幣別實收利息，從 Bitfinex ledger 撈。"""
+        out: dict[str, float] = {}
+        if not self.has_auth:
+            return out
+        for sym in self.cfg.symbols:
+            currency = sym[1:]
+            try:
+                entries = self.client.funding_earnings(
+                    currency, start_mts=int(y_start.timestamp() * 1000))
+            except BfxError:
+                continue
+            s = sum(e.amount for e in entries
+                    if y_start <= datetime.fromtimestamp(e.mts / 1000, TZ) < y_end)
+            if s:
+                out[currency] = s
+        return out
+
+    def _yesterday_review(self) -> str:
+        """昨日策略執行檢討：成交/撤單/結束統計 + 實收利息 + 幾句觀察。
+
+        資料取自 actions_log（機器人自己記的執行動作）+ Bitfinex 實收利息。
+        放進每日報告，讓使用者每天回顧策略跑得好不好、要不要調參數。"""
+        from collections import defaultdict
+        now = datetime.now(TZ)
+        y_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        y_end = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        y_label = y_start.strftime("%m/%d")
+        to_z = lambda dt: dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = self.store.select("actions_log", {
+            "and": f"(ts.gte.{to_z(y_start)},ts.lt.{to_z(y_end)})",
+            "order": "ts.asc", "limit": "3000",
+        })
+        if not rows:
+            return f"🔎 昨日（{y_label}）檢討：無執行紀錄"
+
+        fills = defaultdict(lambda: [0, 0.0, 0.0])  # sym -> [筆數, 金額, apy×金額]
+        cancels, early, matured = defaultdict(int), defaultdict(int), defaultdict(int)
+        held_pcts = []
+        for r in rows:
+            a = r.get("action", "")
+            d = r.get("detail") or {}
+            sym = d.get("symbol", "?")
+            if a == "fill":
+                amt = d.get("amount", 0) or 0
+                apy = d.get("apy") or daily_to_apy(d.get("rate", 0) or 0) * 100
+                fills[sym][0] += 1; fills[sym][1] += amt; fills[sym][2] += apy * amt
+            elif a == "cancel":
+                cancels[sym] += 1
+            elif a in ("closed_early", "closed_matured"):
+                (early if a == "closed_early" else matured)[sym] += 1
+                if d.get("period"):
+                    held_pcts.append((d.get("held_days", 0) or 0) / d["period"] * 100)
+
+        lines = [f"🔎 昨日（{y_label}）策略檢討"]
+        for sym in self.cfg.symbols:
+            c, amt, apyw = fills[sym]
+            parts = [f"成交 {c} 筆/${amt:,.0f}" + (f" 均{apyw / amt:.1f}%" if amt else "")]
+            if early[sym] + matured[sym]:
+                parts.append(f"結束 {early[sym] + matured[sym]}（早{early[sym]}/到{matured[sym]}）")
+            if cancels[sym]:
+                parts.append(f"撤單 {cancels[sym]}")
+            lines.append(f"{sym}：" + "｜".join(parts))
+
+        realized = self._yesterday_earnings(y_start, y_end)
+        if realized:
+            lines.append("實收利息：" + "｜".join(f"{c} {v:.4f}" for c, v in realized.items()))
+
+        # 觀察（簡單啟發式，給人判斷的線索而非結論）
+        obs = []
+        te, tm = sum(early.values()), sum(matured.values())
+        if te + tm:
+            er = te / (te + tm) * 100
+            if er >= 70:
+                obs.append(f"提前還款占 {er:.0f}%，多為短期週轉資金（1 小時保底為主），偏快進快出")
+            elif er <= 30:
+                obs.append(f"放好放滿占 {100 - er:.0f}%，鎖利成功")
+            if held_pcts:
+                obs.append(f"平均放滿 {sum(held_pcts) / len(held_pcts):.0f}%")
+        tc, tf = sum(cancels.values()), sum(f[0] for f in fills.values())
+        if tc and tc > max(5, tf):
+            obs.append(f"撤單 {tc} 次偏多，留意是否頻繁重掛洗掉排隊順位")
+        if realized.get("UST") and realized.get("USD") and realized["USD"] > 0:
+            ratio = realized["UST"] / realized["USD"]
+            obs.append(f"UST 實收是 USD 的 {ratio:.1f} 倍（驗證 UST 溢價）")
+        if obs:
+            lines.append("📝 " + "；".join(obs))
+        return "\n".join(lines)
+
     def _maybe_daily_report(self):
         hour = int(self.cfg.telegram.get("daily_report_hour", 9))
         now = datetime.now(TZ)
@@ -517,6 +606,7 @@ class Engine:
                 ma_line = "\n30日MA年化：" + "｜".join(f"{s} {a:.2f}%"
                                                     for s, a in self.ma_apy.items())
             self.tg.notify("📊 每日報告\n" + self._earnings_summary() + ma_line
+                           + "\n\n" + self._yesterday_review()
                            + "\n\n" + self._status_text())
 
     # ════════ Telegram 指令 ════════
@@ -526,12 +616,14 @@ class Engine:
             "/status": lambda _="": self._status_text(),
             "/rates": lambda _="": self._rates_text(),
             "/earnings": lambda _="": self._earnings_summary(),
+            "/review": lambda _="": self._yesterday_review(),
             "/pause": lambda _="": self._cmd_pause(),
             "/resume": lambda _="": self._cmd_resume(),
             "/go": lambda _="": self._cmd_go(),
             "/lend": self._cmd_lend,
             "/help": lambda _="": (
                 "/status 狀態總覽\n/rates 市場利率\n/earnings 收益\n"
+                "/review 昨日策略檢討\n"
                 "/go 立刻執行最新建議掛單（觀察模式也會真的下單）\n"
                 "/lend 手動掛單，格式：/lend fUSD 250 11.5 7\n"
                 "　　　（幣別 金額 年化% 天期）\n"
