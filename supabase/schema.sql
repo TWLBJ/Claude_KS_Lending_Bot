@@ -143,7 +143,7 @@ begin
       from (
         select ts, action, detail from actions_log
         where action in ('closed_matured', 'closed_early')
-        order by ts desc limit 10
+        order by ts desc limit 500   -- 前端做近1/7/30天篩選+分頁，給足歷史量
       ) a
     )
   );

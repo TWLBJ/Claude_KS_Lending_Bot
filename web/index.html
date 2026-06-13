@@ -40,16 +40,17 @@
       <button id="lockBtn" class="ghost">登出</button>
     </div>
     <div class="cards">
+      <div class="card"><div class="label">錢包總額</div><div class="value" id="dWallet">—</div></div>
       <div class="card"><div class="label">放貸中</div><div class="value" id="dLent">—</div></div>
-      <div class="card"><div class="label">加權年化</div><div class="value good" id="dApy">—</div></div>
-      <div class="card"><div class="label">可用餘額</div><div class="value" id="dAvail">—</div></div>
-      <div class="card"><div class="label">放貸筆數</div><div class="value" id="dCredits">—</div></div>
-      <div class="card"><div class="label">掛單中</div><div class="value" id="dOffers">—</div></div>
+      <div class="card"><div class="label">總預估年化<span class="tip" data-tip="以整個錢包（放貸中＋掛單中＋可用）為分母的實際年化。閒置或未成交的資金會把它拉低，反映真實資金效率。">ⓘ</span></div><div class="value good" id="dEstApy">—</div></div>
       <div class="card"><div class="label">近 30 日收益</div><div class="value good" id="dEarn30">—</div></div>
     </div>
     <div class="chart-box">
       <h3>幣別明細</h3>
-      <table id="symbolTable"><thead><tr><th>幣別</th><th>放貸中</th><th>加權年化</th><th>可用</th><th>掛單</th></tr></thead><tbody></tbody></table>
+      <table id="symbolTable"><thead><tr><th>幣別</th><th>錢包總額</th><th>放貸中</th>
+        <th>加權年化<span class="tip" data-tip="只看放貸中的錢的加權年化（資金利用率 100% 時的報酬）">ⓘ</span></th>
+        <th>總預估年化<span class="tip" data-tip="放貸中的錢 ÷ 整個錢包 後的年化，含閒置與掛單中資金的拖累">ⓘ</span></th>
+        <th>可用</th><th>放貸筆數</th><th>掛單</th></tr></thead><tbody></tbody></table>
     </div>
     <div class="chart-box">
       <h3>放貸中明細（每筆）</h3>
@@ -69,8 +70,17 @@
       <table id="suggestTable"><thead><tr><th>幣別</th><th>金額</th><th>年化</th><th>日利率</th><th>天期</th></tr></thead><tbody></tbody></table>
     </div>
     <div class="chart-box">
-      <h3>近 10 筆已結束放貸 <span class="muted small">（看借款人是提前還款還是放好放滿）</span></h3>
-      <table id="closedTable"><thead><tr><th>結束時間</th><th>幣別</th><th>金額</th><th>年化</th><th>持有/天期</th><th>結束原因</th></tr></thead><tbody></tbody></table>
+      <div class="chart-head">
+        <h3>已結束放貸 <span class="muted small">（看借款人是提前還款還是放好放滿）</span></h3>
+        <div class="tf-btns" id="closedRange">
+          <button class="tf" data-days="1">近 1 天</button>
+          <button class="tf active" data-days="7">近 7 天</button>
+          <button class="tf" data-days="30">近 30 天</button>
+          <button class="tf" data-days="0">全部</button>
+        </div>
+      </div>
+      <table id="closedTable"><thead><tr><th>結束時間</th><th>幣別</th><th>金額</th><th>年化</th><th>持有/天期</th><th>淨獲利<span class="tip" data-tip="利息 = 金額 × 日利率 × 持有時間（最低 1 小時）；再扣 15% Bitfinex 放貸手續費（官方 fee schedule）">ⓘ</span></th><th>結束原因</th></tr></thead><tbody></tbody></table>
+      <div class="pager" id="closedPager"></div>
     </div>
     <div class="chart-box">
       <h3>近期動作</h3>

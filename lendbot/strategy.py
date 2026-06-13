@@ -168,9 +168,18 @@ def build_ladder(available: float, view: MarketView, scfg: dict) -> list[OfferPl
 # ── 重掛判斷 ──────────────────────────────────────────────
 
 def should_cancel(offer: Offer, view: MarketView, scfg: dict, now_mts: int) -> bool:
-    """掛太久沒成交且利率明顯高於目前錨點 → 撤單重掛，減少資金閒置。"""
+    """掛太久沒成交、且利率高到連階梯最高檔都追不上 → 撤單重掛，減少資金閒置。
+
+    比較基準是「現在會掛的最高檔利率」（錨點 × 最大 mult），不是錨點本身：
+    階梯頂檔本來就掛在錨點 ×1.45，若拿「錨點 ×1.05」當門檻，頂檔每過 10 分鐘
+    就被判定過貴撤掉重掛 —— 利率往往只差 0.0x%，卻一直洗掉排隊順位（無意義 churn，
+    近期動作看到的「同時間 cancel+submit、年化只差一點點」就是這個）。
+    只有當市場真的跌到「連頂檔都顯得過高」時才重排。"""
     age_minutes = (now_mts - offer.mts_created) / 60_000
     if age_minutes < float(scfg.get("stale_minutes", 10)):
         return False
+    key = "spike_ladder" if (view.spike and scfg.get("spike_ladder")) else "ladder"
+    ladder = scfg.get(key) or [{"mult": 1.0}]
+    top_mult = max(float(r.get("mult", 1.0)) for r in ladder)
     threshold = 1 + float(scfg.get("cancel_threshold", 0.05))
-    return offer.rate > view.anchor * threshold
+    return offer.rate > view.anchor * top_mult * threshold

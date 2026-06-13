@@ -198,14 +198,22 @@ def test_ladder_high_rate_uses_long_period():
 # ── 重掛 ──
 
 def test_should_cancel_stale_and_overpriced():
+    # 利率高過「錨點 × 頂檔 mult(1.45) × 1.05」≈ 0.000457 才算真的過貴
     offer = Offer(id=1, symbol="fUSD", mts_created=NOW - 20 * 60_000,
-                  amount=200, rate=0.0004, period=2)
+                  amount=200, rate=0.0006, period=2)
     assert should_cancel(offer, view_with(0.0003), SCFG, NOW)
+
+
+def test_should_not_cancel_top_rung_offer():
+    # 頂檔本來就掛在錨點 ×1.45，小幅漂移不該被當「過貴」反覆撤掉重掛（防 churn）
+    offer = Offer(id=1, symbol="fUSD", mts_created=NOW - 20 * 60_000,
+                  amount=200, rate=0.0003 * 1.45, period=2)
+    assert not should_cancel(offer, view_with(0.0003), SCFG, NOW)
 
 
 def test_should_not_cancel_fresh_offer():
     offer = Offer(id=1, symbol="fUSD", mts_created=NOW - 3 * 60_000,
-                  amount=200, rate=0.0004, period=2)
+                  amount=200, rate=0.0006, period=2)
     assert not should_cancel(offer, view_with(0.0003), SCFG, NOW)
 
 

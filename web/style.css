@@ -99,6 +99,29 @@ th { color: var(--muted); font-weight: 600; }
 
 .muted { color: var(--muted); }
 .small { font-size: 0.78rem; font-weight: 400; }
+
+/* 資訊提示：滑鼠移上去顯示說明氣泡（native title 在桌機常常不出現/延遲，自己畫） */
+.tip {
+  position: relative; display: inline-block; color: var(--muted);
+  font-size: 0.72rem; margin-left: 3px; cursor: help; border-bottom: 1px dotted var(--muted);
+}
+.tip::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: 150%; transform: translateX(-50%);
+  background: #0b1016; color: var(--text); border: 1px solid var(--border);
+  padding: 7px 10px; border-radius: 8px; width: max-content; max-width: 250px;
+  font-size: 0.75rem; font-weight: 400; line-height: 1.45; white-space: normal;
+  text-align: left; opacity: 0; pointer-events: none; transition: opacity .12s;
+  z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,.4);
+}
+.tip:hover::after { opacity: 1; }
+
+/* 合計列 + 分頁 */
+tr.total-row td { font-weight: 700; border-top: 2px solid var(--border); }
+.pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; justify-content: flex-end; }
+.pager button { padding: 4px 12px; font-size: 0.8rem; }
+.pager button:disabled { opacity: .4; cursor: default; }
+.pager .page-info { color: var(--muted); font-size: 0.8rem; }
 .error { color: var(--bad); margin-top: 8px; }
 .hidden { display: none; }
 footer { margin-top: 28px; text-align: center; }

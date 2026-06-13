@@ -26,6 +26,35 @@ const DEFAULT_PKEY = "a30:p2:p30";
 
 const dailyToApy = (r) => (Math.pow(1 + r, 365) - 1) * 100;
 const pct = (apy) => apy.toFixed(2) + "%";
+
+// Bitfinex 對提供融資（放貸）賺到的利息抽 15% 手續費（官方 fee schedule）
+const FUNDING_FEE = 0.15;
+
+// 一筆 status 的「卡住的錢」：放貸中 + 掛單中（已被預留）+ 可用
+const offersTotal = (s) => (s.offers || []).reduce((a, o) => a + (o.amount || 0), 0);
+const walletTotal = (s) => (s.available || 0) + (s.total_lent || 0) + offersTotal(s);
+// 總預估年化：只有放貸中的錢在賺，分母放整個錢包 → 反映閒置/掛單未成交的拖累
+const estApy = (s) => {
+  const w = walletTotal(s);
+  return w ? (s.total_lent || 0) * (s.weighted_apy || 0) / w : 0;
+};
+
+// 剩餘時間：用開始時間 + 天期 推算到期點，前端即時換算成 天/時/分（比後端 X.X 天好懂）
+function fmtRemaining(openedIso, period) {
+  if (!openedIso || !period) return "—";
+  let ms = new Date(openedIso).getTime() + period * 86400000 - Date.now();
+  if (ms <= 0) return "已到期";
+  const d = Math.floor(ms / 86400000); ms -= d * 86400000;
+  const h = Math.floor(ms / 3600000); ms -= h * 3600000;
+  const m = Math.floor(ms / 60000);
+  return (d ? `${d}天` : "") + (d || h ? `${h}小時` : "") + `${m}分`;
+}
+
+// 已結束放貸的淨獲利：利息 = 金額 × 日利率 × 持有天數（最低 1 小時），再扣 15% 手續費
+function closedProfit(d) {
+  const days = Math.max(d.held_days || 0, 1 / 24);  // Bitfinex 最低收 1 小時利息
+  return (d.amount || 0) * (d.rate || 0) * days * (1 - FUNDING_FEE);
+}
 const chartColors = {
   grid: "#2c3644", text: "#8b98a9",
   line: "#4fc3f7", good: "#4caf80", bad: "#ef5350", warn: "#ffb74d",
@@ -435,22 +464,22 @@ function renderDashboard(d) {
   const newestTs = Math.max(0, ...statuses.map((s) => s.ts ? new Date(s.ts).getTime() : 0));
   if (newestTs) {
     const age = (Date.now() - newestTs) / 60000;
+    const clock = new Date(newestTs).toLocaleTimeString("zh-TW", { hour12: false });
     $("botHeartbeat").textContent = age < 15
-      ? `🟢 ${Math.round(age)} 分鐘前回報`
-      : `🔴 已 ${Math.round(age)} 分鐘沒回報，機器人可能停了`;
+      ? `🟢 ${Math.round(age)} 分鐘前回報 · ${clock}`
+      : `🔴 已 ${Math.round(age)} 分鐘沒回報（最後 ${clock}），機器人可能停了`;
   }
 
-  // 總覽卡片：USD 與 UST 都是美元穩定幣，直接加總顯示
+  // 總覽卡片：USD 與 UST 都是美元穩定幣，直接加總顯示（明細與其餘指標移到下方幣別明細表）
   const sum = (f) => statuses.reduce((a, s) => a + (f(s) || 0), 0);
   const totalLent = sum((s) => s.total_lent);
-  const weightedApy = totalLent
-    ? statuses.reduce((a, s) => a + (s.total_lent || 0) * (s.weighted_apy || 0), 0) / totalLent
+  const grandWallet = sum(walletTotal);
+  const grandEstApy = grandWallet
+    ? statuses.reduce((a, s) => a + (s.total_lent || 0) * (s.weighted_apy || 0), 0) / grandWallet
     : 0;
+  $("dWallet").textContent = "$" + grandWallet.toLocaleString(undefined, { maximumFractionDigits: 2 });
   $("dLent").textContent = "$" + totalLent.toLocaleString();
-  $("dApy").textContent = pct(weightedApy);
-  $("dAvail").textContent = "$" + sum((s) => s.available).toLocaleString();
-  $("dCredits").textContent = sum((s) => s.credits_count);
-  $("dOffers").textContent = sum((s) => s.offers_count);
+  $("dEstApy").textContent = pct(grandEstApy);
 
   const earnings = d.earnings || [];
   const total30 = earnings.reduce((a, e) => a + (e.amount || 0), 0);
@@ -478,12 +507,12 @@ function renderCredits(statuses) {
   const tbody = $("creditsTable").querySelector("tbody");
   tbody.innerHTML = rows.length
     ? rows.map((c) => {
-        const remainPct = c.period ? c.remaining_days / c.period : 0;
+        const remainPct = c.period ? Math.max(0, c.remaining_days / c.period) : 0;
         const bar = `<span class="mini-bar"><span style="width:${(1 - remainPct) * 100}%"></span></span>`;
         return `<tr><td>${c.symbol}</td><td>$${c.amount.toLocaleString()}</td>
           <td>${pct(c.apy ?? dailyToApy(c.rate))}</td><td>${c.period} 天</td>
           <td>${c.opened ? fmtDate(c.opened) : "—"}</td>
-          <td>${c.remaining_days} 天 ${bar}</td></tr>`;
+          <td>${fmtRemaining(c.opened, c.period)} ${bar}</td></tr>`;
       }).join("")
     : `<tr><td colspan="6" class="muted">目前沒有放貸中的部位</td></tr>`;
 }
@@ -499,30 +528,83 @@ function renderSuggested(statuses) {
      <td>${(o.rate * 100).toFixed(5)}%</td><td>${o.period} 天</td></tr>`).join("");
 }
 
+// 已結束放貸：時間篩選 + 分頁（資料存起來，按鈕只切視圖不重打 API）
+const CLOSED_PER_PAGE = 10;
+let closedAll = [];
+let closedRangeDays = 7;  // 預設近 7 天
+let closedPage = 0;
+
 function renderClosed(closed) {
+  closedAll = closed || [];
+  closedPage = 0;
+  renderClosedView();
+}
+
+function renderClosedView() {
   const tbody = $("closedTable").querySelector("tbody");
-  tbody.innerHTML = closed.length
-    ? closed.map((a) => {
+  const cutoff = closedRangeDays ? Date.now() - closedRangeDays * 86400000 : 0;
+  const filtered = closedAll.filter((a) => new Date(a.ts).getTime() >= cutoff);
+
+  const pages = Math.max(1, Math.ceil(filtered.length / CLOSED_PER_PAGE));
+  closedPage = Math.min(closedPage, pages - 1);
+  const page = filtered.slice(closedPage * CLOSED_PER_PAGE, (closedPage + 1) * CLOSED_PER_PAGE);
+
+  tbody.innerHTML = page.length
+    ? page.map((a) => {
         const d = a.detail || {};
         const early = a.action === "closed_early";
+        const profit = closedProfit(d);
         return `<tr><td>${fmtDate(a.ts)}</td><td>${d.symbol || ""}</td>
           <td>$${(d.amount ?? 0).toLocaleString()}</td>
           <td>${(d.apy ?? 0).toFixed(2)}%</td>
-          <td>${(d.held_days ?? 0).toFixed(1)} / ${d.period} 天</td>
+          <td>${(d.held_days ?? 0).toFixed(2)} / ${d.period} 天</td>
+          <td class="good">+$${profit.toFixed(4)}</td>
           <td><span class="badge ${early ? "warn" : "ok"}">${early ? "提前還款" : "到期歸還"}</span></td></tr>`;
       }).join("")
-    : `<tr><td colspan="6" class="muted">還沒有結束的單（機器人啟動後才開始追蹤）</td></tr>`;
+    : `<tr><td colspan="7" class="muted">這段期間沒有結束的單</td></tr>`;
+
+  // 分頁列：總筆數 + 該期間淨獲利合計 + 上/下一頁
+  const totalProfit = filtered.reduce((s, a) => s + closedProfit(a.detail || {}), 0);
+  $("closedPager").innerHTML = filtered.length
+    ? `<span class="page-info">共 ${filtered.length} 筆 · 淨獲利合計 +$${totalProfit.toFixed(4)}</span>
+       <button class="ghost" id="closedPrev" ${closedPage <= 0 ? "disabled" : ""}>← 上一頁</button>
+       <span class="page-info">${closedPage + 1} / ${pages}</span>
+       <button class="ghost" id="closedNext" ${closedPage >= pages - 1 ? "disabled" : ""}>下一頁 →</button>`
+    : "";
+  const prev = $("closedPrev"), next = $("closedNext");
+  if (prev) prev.onclick = () => { closedPage--; renderClosedView(); };
+  if (next) next.onclick = () => { closedPage++; renderClosedView(); };
 }
 
 function renderSymbolTable(statuses) {
   const tbody = $("symbolTable").querySelector("tbody");
-  tbody.innerHTML = statuses.length
-    ? statuses.map((s) => `<tr><td>${s.symbol}</td>
-        <td>$${(s.total_lent ?? 0).toLocaleString()}</td>
-        <td>${pct(s.weighted_apy ?? 0)}</td>
-        <td>$${(s.available ?? 0).toLocaleString()}</td>
-        <td>${s.offers_count ?? 0} 筆</td></tr>`).join("")
-    : `<tr><td colspan="5" class="muted">機器人還沒回報</td></tr>`;
+  const money = (v) => "$" + (v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (!statuses.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="muted">機器人還沒回報</td></tr>`;
+    return;
+  }
+  const rows = statuses.map((s) => `<tr><td>${s.symbol}</td>
+      <td>${money(walletTotal(s))}</td>
+      <td>${money(s.total_lent)}</td>
+      <td>${pct(s.weighted_apy ?? 0)}</td>
+      <td>${pct(estApy(s))}</td>
+      <td>${money(s.available)}</td>
+      <td>${s.credits_count ?? 0} 筆</td>
+      <td>${s.offers_count ?? 0} 筆</td></tr>`).join("");
+
+  // 合計列：加權年化用放貸金額加權，總預估年化用整個錢包當分母
+  const sum = (f) => statuses.reduce((a, s) => a + (f(s) || 0), 0);
+  const tLent = sum((s) => s.total_lent);
+  const tWallet = sum(walletTotal);
+  const wApy = tLent ? sum((s) => (s.total_lent || 0) * (s.weighted_apy || 0)) / tLent : 0;
+  const eApy = tWallet ? sum((s) => (s.total_lent || 0) * (s.weighted_apy || 0)) / tWallet : 0;
+  const total = `<tr class="total-row"><td>合計</td>
+      <td>${money(tWallet)}</td><td>${money(tLent)}</td>
+      <td>${pct(wApy)}</td><td>${pct(eApy)}</td>
+      <td>${money(sum((s) => s.available))}</td>
+      <td>${sum((s) => s.credits_count)} 筆</td>
+      <td>${sum((s) => s.offers_count)} 筆</td></tr>`;
+  tbody.innerHTML = rows + total;
 }
 
 function drawEarningsChart(earnings) {
@@ -634,6 +716,16 @@ $("lockBtn").addEventListener("click", () => {
   $("dashPanel").classList.add("hidden");
   $("lockPanel").classList.remove("hidden");
 });
+
+// 已結束放貸的時間範圍切換
+document.querySelectorAll("#closedRange .tf").forEach((btn) =>
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#closedRange .tf").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    closedRangeDays = Number(btn.dataset.days);
+    closedPage = 0;
+    renderClosedView();
+  }));
 
 buildMarketDOM();
 startMarket();
