@@ -722,6 +722,18 @@ $("lockBtn").addEventListener("click", () => {
   $("lockPanel").classList.remove("hidden");
 });
 
+// 立即刷新：手動重抓一次資料（數據每 5 分鐘才自動拉，等不及就按這個）
+$("refreshBtn").addEventListener("click", async () => {
+  const t = localStorage.getItem(TOKEN_KEY);
+  if (!t) return;
+  const btn = $("refreshBtn");
+  btn.disabled = true;
+  btn.textContent = "⟳ 刷新中…";
+  await tryUnlock(t, true);
+  btn.textContent = "⟳ 刷新";
+  btn.disabled = false;
+});
+
 // 已結束放貸的時間範圍切換
 document.querySelectorAll("#closedRange .tf").forEach((btn) =>
   btn.addEventListener("click", () => {
